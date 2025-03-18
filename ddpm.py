@@ -6,6 +6,7 @@ class DDPM:
         self.betas = torch.linspace(beta_start, beta_end, timesteps, dtype=torch.float32, device=device)
         self.alphas = 1.0 - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, axis=0)
+        print(self.alphas_cumprod)
 
     def sample(self, num_samples):
         with torch.no_grad():  # avoid backprop wrt model parameters
