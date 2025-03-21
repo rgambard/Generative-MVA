@@ -7,30 +7,38 @@ from torchvision import datasets, transforms, utils
 from torch.optim.lr_scheduler import StepLR
 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, bn = True):
+    def __init__(self, in_channels, out_channels, bn = False, res=True, bias = False):
         super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=True)
         self.bn1 = nn.BatchNorm2d(out_channels) if bn else nn.Identity()
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.relu = nn.ReLU()
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=bias)
+        self.conv3 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=bias)
+        self.conv4 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=bias)
         self.bn2 = nn.BatchNorm2d(out_channels) if bn else nn.Identity()
-        self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False) if in_channels != out_channels else nn.Identity()
+        self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)# if in_channels != out_channels else nn.Identity()
+        self.res = res
 
     def forward(self, x):
-        residual = self.skip(x)
+        if self.res:
+            residual = self.skip(x)
+        else: 
+            residual = 0
         x = self.relu(self.bn1(self.conv1(x)))
-        x = self.bn2(self.conv2(x))
-        return self.relu(x + residual)
+        x = self.relu(self.bn2(self.conv2(x)))
+        #x = self.relu(self.conv3(x))
+        #x = self.relu(self.conv4(x))
+        return x + residual
 
 class ResidualUNet(nn.Module):
     def __init__(self, input_channels=3, output_channels=3):
         super(ResidualUNet, self).__init__()
 
         # Encoder
-        self.enc1 = ResidualBlock(input_channels, 64)
-        self.enc2 = ResidualBlock(64, 128)
-        self.enc3 = ResidualBlock(128, 256)
-        self.enc4 = ResidualBlock(256, 512)
+        self.enc1 = ResidualBlock(input_channels, 64, bias=True)
+        self.enc2 = ResidualBlock(64, 128, bias=True)
+        self.enc3 = ResidualBlock(128, 256, bias=True)
+        self.enc4 = ResidualBlock(256, 512, bias=True)
 
         # Decoder
         self.dec3 = ResidualBlock( 512+512, 256)
@@ -39,10 +47,10 @@ class ResidualUNet(nn.Module):
         self.dec0 = ResidualBlock(64+ 64, 64)
 
         # Bottleneck
-        self.bottleneck = ResidualBlock(512,512)
+        self.bottleneck = ResidualBlock(512,512, bias=True)
 
         # Final output
-        self.final_conv = nn.Conv2d(64, output_channels, kernel_size=1)
+        self.final_conv = nn.Conv2d(64, output_channels, kernel_size=1, bias=False)
 
         # Max pooling and upsampling
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
@@ -72,8 +80,14 @@ class ResidualUNet(nn.Module):
 class Denoiser(nn.Module):
     def __init__(self,noisy_input_channels, output_channels):
         super(Denoiser, self).__init__()
-        self.unet_res =ResidualUNet(noisy_input_channels,output_channels)
-    def forward(self,x):
-        x = self.unet_res(x)
-        return x
+        self.unet_res =ResidualUNet(noisy_input_channels+1,output_channels)
+    def forward(self,im, alphasb_batch):
+
+        #features_sigma = torch.sin(alphasb_batch[:,None,None,None]*(torch.arange(im.shape[2], device = im.device)[None,None,:,None]+10*torch.arange(im.shape[3], device = im.device)[None,None,None,:]))/0.70 # we encode the sigmas into sinosiudals encodings 
+        features_sigma = alphasb_batch[:,None,None,None].expand((im.shape[0],1,im.shape[2],im.shape[3]))
+
+        # we append the sigmas to the model input as a new dimension of the image
+        mod_input = torch.cat((im, features_sigma), dim=1)
+        y = self.unet_res(mod_input)
+        return y
 
